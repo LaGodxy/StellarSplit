@@ -99,7 +99,7 @@ git checkout -b fix/bug-description
 
 ### Find or Create an Issue
 
-- Check [existing issues](https://github.com/yourusername/stellarsplit/issues) to avoid duplication
+- Check [existing issues](https://github.com/OlufunbiIK/stellarsplit/issues) to avoid duplication
 - For bugs, search closed issues - it might already be fixed
 - For new features, open an issue to discuss before implementing
 - Comment on an issue to express interest or ask questions
@@ -259,7 +259,7 @@ When working with receipt scanning:
 
 ---
 
-## 🔄 Pull Request Process
+## Pull Request Process
 
 ### 1. Ensure Quality
 
