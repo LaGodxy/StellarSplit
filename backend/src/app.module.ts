@@ -11,6 +11,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { CurrencyModule } from './modules/currency/currency.module';
 import { SplitsModule } from './modules/splits/splits.module';
 import { ItemsModule } from './modules/items/items.module';
+import { RecurringSplitsModule } from './recurring-splits/recurring-splits.module';
 
 // Load environment variables
 dotenv.config({
@@ -47,6 +48,7 @@ dotenv.config({
     CurrencyModule,
     SplitsModule,
     ItemsModule,
+    RecurringSplitsModule,
   ],
 })
 export class AppModule { }
