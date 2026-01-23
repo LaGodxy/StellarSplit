@@ -12,6 +12,21 @@ import { CurrencyModule } from "./modules/currency/currency.module";
 import { SplitsModule } from "./modules/splits/splits.module";
 import { BullModule } from "@nestjs/bull";
 import { EmailModule } from "./email/email.module";
+import { Module } from "@nestjs/common";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { TypeOrmModule } from "@nestjs/typeorm";
+import * as dotenv from "dotenv";
+import * as path from "path";
+import databaseConfig from "./config/database.config";
+import appConfig from "./config/app.config";
+import { HealthModule } from "./modules/health/health.module";
+import { StellarModule } from "./stellar/stellar.module";
+import { PaymentsModule } from "./payments/payments.module";
+import { CurrencyModule } from "./modules/currency/currency.module";
+import { SplitsModule } from "./modules/splits/splits.module";
+import { ItemsModule } from "./modules/items/items.module";
+import { RecurringSplitsModule } from "./recurring-splits/recurring-splits.module";
+import { ReceiptsModule } from "./receipts/receipts.module";
 
 // Load environment variables
 dotenv.config({
@@ -57,6 +72,9 @@ dotenv.config({
       }),
     }),
     EmailModule,
+    ItemsModule,
+    RecurringSplitsModule,
+    ReceiptsModule,
   ],
 })
 export class AppModule {}
