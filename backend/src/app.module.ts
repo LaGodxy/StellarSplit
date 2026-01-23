@@ -1,3 +1,4 @@
+
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
@@ -13,6 +14,9 @@ import { CurrencyModule } from "./modules/currency/currency.module";
 import { SplitsModule } from "./modules/splits/splits.module";
 import { ItemsModule } from "./modules/items/items.module";
 import { EmailModule } from "./email/email.module";
+import { RecurringSplitsModule } from './recurring-splits/recurring-splits.module';
+import { ReceiptsModule } from './receipts/receipts.module';
+import { SplitHistoryModule } from './split-history/split-history.module';
 
 // Load environment variables
 dotenv.config({
@@ -59,6 +63,9 @@ dotenv.config({
     SplitsModule,
     ItemsModule,
     EmailModule,
+    RecurringSplitsModule,
+    ReceiptsModule,
+    SplitHistoryModule,
   ],
 })
 export class AppModule {}
