@@ -20,6 +20,7 @@ import { ActivitiesModule } from "./modules/activities/activities.module";
 import { SearchModule } from "./search/search.module";
 import { AnalyticsModule } from "./analytics/analytics.module";
 import { ExportModule } from './export/export.module';
+import { WebhooksModule } from "./webhooks/webhooks.module";
 // Load environment variables
 dotenv.config({
   path: path.resolve(__dirname, "../.env"),
@@ -73,6 +74,8 @@ dotenv.config({
     // Analytics module for user spending & reports
     AnalyticsModule,
     ExportModule,
+    // Webhooks module for external event notifications
+    WebhooksModule,
   ],
 })
 export class AppModule {}
