@@ -15,4 +15,8 @@ export const ROUTES = [
     to: "/history",
     label: "History",
   },
+  {
+     to: "/notifications",
+    label: "Notifications",
+  }
 ];

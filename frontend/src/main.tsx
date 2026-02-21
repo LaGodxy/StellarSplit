@@ -56,6 +56,15 @@ const router = createBrowserRouter([
           return { Component: SplitCreationWizard };
         },
       },
+      {
+        path: "/notifications",
+        lazy: async () => {
+          const { default: NotificationCenterPage } = await import(
+            "./pages/NotificationCenterPage"
+          );
+          return { Component: NotificationCenterPage };
+        },
+      },
     ],
   },
 ]);
