@@ -11,7 +11,9 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, String, Vec, token};
+use soroban_sdk::token::TokenClient;
+use std::string::ToString;
 
 mod events;
 mod storage;
@@ -298,81 +300,339 @@ impl SplitEscrowContract {
     pub fn get_token(env: Env) -> Address {
         storage::get_token(&env)
     }
-}
 
-impl SplitEscrowContract {
-    fn is_fully_funded_internal(split: &Split) -> bool {
-        let mut total_paid: i128 = 0;
-        for i in 0..split.participants.len() {
-            total_paid += split.participants.get(i).unwrap().amount_paid;
-        }
-        total_paid >= split.total_amount
+    // ============================================
+    // Insurance Query Functions
+    // ============================================
+
+    /// Get insurance policy by ID
+    pub fn get_insurance(env: Env, insurance_id: String) -> types::InsurancePolicy {
+        storage::get_insurance(&env, &insurance_id)
     }
 
-    fn release_funds_internal(env: &Env, split_id: u64, mut split: Split) -> Result<i128, Error> {
-        if split.status == SplitStatus::Cancelled {
-            return Err(Error::SplitCancelled);
-        }
-
-        if split.status == SplitStatus::Released {
-            return Err(Error::SplitReleased);
-        }
-
-        if !Self::is_fully_funded_internal(&split) {
-            return Err(Error::SplitNotFunded);
-        }
-
-        let available = split.amount_collected - split.amount_released;
-        if available <= 0 {
-            return Err(Error::NoFundsAvailable);
-        }
-
-        if split.status != SplitStatus::Completed {
-            split.status = SplitStatus::Completed;
-            events::emit_escrow_completed(env, split_id, split.total_amount);
-        }
-
-        let token_address = storage::get_token(env);
-        let token_client = token::Client::new(env, &token_address);
-        let contract_address = env.current_contract_address();
-        token_client.transfer(&contract_address, &split.creator, &available);
-
-        split.amount_released += available;
-        split.status = SplitStatus::Released;
-        storage::set_split(env, split_id, &split);
-
-        events::emit_funds_released(
-            env,
-            split_id,
-            &split.creator,
-            available,
-            env.ledger().timestamp(),
-        );
-
-        Ok(available)
+    /// Get insurance claim by ID
+    pub fn get_claim(env: Env, claim_id: String) -> types::InsuranceClaim {
+        storage::get_claim(&env, &claim_id)
     }
-}
 
-    /// Get a participant's status in a split
+    /// Get all claims for an insurance policy
+    pub fn get_insurance_claims(env: Env, insurance_id: String) -> Vec<String> {
+        storage::get_insurance_claims(&env, &insurance_id)
+    }
+
+    /// Check if a split has insurance
+    pub fn has_split_insurance(env: Env, split_id: String) -> bool {
+        storage::has_split_insurance(&env, &split_id)
+    }
+
+    /// Get insurance ID for a split
+    pub fn get_split_insurance(env: Env, split_id: u64) -> Option<String> {
+        storage::get_split_to_insurance(&env, &split_id.to_string())
+    }
+
+    /// Track user split usage for rewards calculation
     ///
-    /// Required for DRIP escrow queries.
-    pub fn get_participant_status(
+    /// This function records user activities that contribute to rewards.
+    pub fn track_split_usage(
         env: Env,
-        split_id: u64,
-        participant: Address,
-    ) -> Result<Participant, Error> {
-        if !storage::has_split(&env, split_id) {
+        user: Address,
+    ) -> Result<(), Error> {
+        // Get caller's address (require_auth for the caller)
+        let caller = env.current_contract_address();
+        caller.require_auth();
+
+        // Get or create user rewards data
+        let mut rewards = if let Some(existing_rewards) = storage::get_user_rewards(&env, &user) {
+            existing_rewards
+        } else {
+            types::UserRewards {
+                user: user.clone(),
+                total_splits_created: 0,
+                total_splits_participated: 0,
+                total_amount_transacted: 0,
+                rewards_earned: 0,
+                rewards_claimed: 0,
+                last_activity: env.ledger().timestamp(),
+                status: types::RewardsStatus::Active,
+            }
+        };
+
+        // Create activity record
+        let activity_id = storage::get_next_activity_id(&env);
+        let activity = types::UserActivity {
+            user: user.clone(),
+            activity_type: types::ActivityType::SplitParticipated,
+            split_id: 0, // This would be set based on context
+            amount: 0, // This would be set based on context
+            timestamp: env.ledger().timestamp(),
+        };
+
+        // Store activity
+        storage::set_user_activity(&env, &user, activity_id, &activity);
+
+        // Update rewards data
+        rewards.total_splits_participated += 1;
+        rewards.last_activity = env.ledger().timestamp();
+        
+        // Store updated rewards
+        storage::set_user_rewards(&env, &user, &rewards);
+
+        // Emit activity tracked event
+        events::emit_activity_tracked(&env, &user, "split_participated", 0, 0);
+
+        Ok(())
+    }
+
+    /// Calculate rewards for a user
+    ///
+    /// This function calculates the total rewards earned by a user based on their activity.
+    pub fn calculate_rewards(
+        env: Env,
+        user: Address,
+    ) -> i128 {
+        // Get user rewards data
+        let rewards = storage::get_user_rewards(&env, &user)
+            .unwrap_or(types::UserRewards {
+                user: user.clone(),
+                total_splits_created: 0,
+                total_splits_participated: 0,
+                total_amount_transacted: 0,
+                rewards_earned: 0,
+                rewards_claimed: 0,
+                last_activity: env.ledger().timestamp(),
+                status: types::RewardsStatus::Active,
+            });
+
+        // Calculate rewards based on activity
+        // Base rewards: 10 tokens per split created
+        let creation_rewards = rewards.total_splits_created as i128 * 10;
+        
+        // Participation rewards: 5 tokens per split participated
+        let participation_rewards = rewards.total_splits_participated as i128 * 5;
+        
+        // Volume rewards: 0.1% of total amount transacted
+        let volume_rewards = rewards.total_amount_transacted / 1000;
+        
+        // Total rewards
+        let total_rewards = creation_rewards + participation_rewards + volume_rewards;
+        
+        // Update rewards earned
+        let mut updated_rewards = rewards;
+        updated_rewards.rewards_earned = total_rewards;
+        storage::set_user_rewards(&env, &user, &updated_rewards);
+
+        // Calculate available rewards (earned - claimed)
+        let available_rewards = total_rewards - rewards.rewards_claimed;
+
+        // Emit rewards calculated event
+        events::emit_rewards_calculated(&env, &user, total_rewards, available_rewards);
+
+        total_rewards
+    }
+
+    /// Claim rewards for a user
+    ///
+    /// This function allows users to claim their earned rewards.
+    pub fn claim_rewards(
+        env: Env,
+        user: Address,
+    ) -> Result<i128, Error> {
+        // Get caller's address (require_auth for the caller)
+        let caller = env.current_contract_address();
+        caller.require_auth();
+
+        // Ensure caller is claiming their own rewards
+        if caller != user {
+            return Err(Error::UserNotFound);
+        }
+
+        // Get user rewards data
+        let mut rewards = storage::get_user_rewards(&env, &user)
+            .ok_or(Error::UserNotFound)?;
+
+        // Check if user is eligible for rewards
+        if rewards.status != types::RewardsStatus::Active {
+            return Err(Error::RewardsAlreadyClaimed);
+        }
+
+        // Calculate available rewards
+        let available_rewards = rewards.rewards_earned - rewards.rewards_claimed;
+        
+        if available_rewards <= 0 {
+            return Err(Error::InsufficientRewards);
+        }
+
+        // Update claimed rewards
+        rewards.rewards_claimed += available_rewards;
+        rewards.last_activity = env.ledger().timestamp();
+        
+        // Store updated rewards
+        storage::set_user_rewards(&env, &user, &rewards);
+
+        // Note: In a real implementation, you would transfer tokens here
+        // For now, we'll just emit the event
+
+        // Emit rewards claimed event
+        events::emit_rewards_claimed(&env, &user, available_rewards);
+
+        Ok(available_rewards)
+    }
+
+    /// Submit verification for a split
+    ///
+    /// This function allows users to submit verification requests with evidence.
+    pub fn submit_verification(
+        env: Env,
+        split_id: String,
+        receipt_hash: String,
+    ) -> Result<String, Error> {
+        // Get caller's address (require_auth for the caller)
+        let caller = env.current_contract_address();
+        caller.require_auth();
+
+        // Check if split exists
+        let split_id_num = {
+            let mut result = 0u64;
+            let chars = split_id.clone();
+            for i in 0..chars.len() {
+                let char_val = chars.get(i).unwrap();
+                match char_val {
+                    '0' => result = result * 10 + 0,
+                    '1' => result = result * 10 + 1,
+                    '2' => result = result * 10 + 2,
+                    '3' => result = result * 10 + 3,
+                    '4' => result = result * 10 + 4,
+                    '5' => result = result * 10 + 5,
+                    '6' => result = result * 10 + 6,
+                    '7' => result = result * 10 + 7,
+                    '8' => result = result * 10 + 8,
+                    '9' => result = result * 10 + 9,
+                    _ => {} // Skip non-digit characters
+                }
+            }
+            result
+        };
+
+        if !storage::has_split(&env, split_id_num) {
             return Err(Error::SplitNotFound);
         }
 
-        let split = storage::get_split(&env, split_id);
+        // Check if verification already exists
+        if storage::has_verification_request(&env, &split_id) {
+            return Err(Error::VerificationAlreadyExists);
+        }
 
-        for i in 0..split.participants.len() {
-            let p = split.participants.get(i).unwrap();
-            if p.address == participant {
-                return Ok(p);
+        // Generate verification ID
+        let verification_id = storage::get_next_verification_id(&env);
+
+        // Create verification request
+        let request = types::VerificationRequest {
+            verification_id: verification_id.clone(),
+            split_id: split_id.clone(),
+            requester: caller,
+            receipt_hash: receipt_hash.clone(),
+            evidence_url: None,
+            submitted_at: env.ledger().timestamp(),
+            status: types::VerificationStatus::Pending,
+            verified_by: None,
+            verified_at: None,
+            rejection_reason: None,
+        };
+
+        // Store verification request
+        storage::set_verification_request(&env, &verification_id, &request);
+
+        // Emit verification submitted event
+        events::emit_verification_submitted(&env, &verification_id, &split_id, &caller);
+
+        Ok(verification_id)
+    }
+
+    /// Verify a split
+    ///
+    /// This function allows authorized oracles to verify split legitimacy.
+    pub fn verify_split(
+        env: Env,
+        verification_id: String,
+        verified: bool,
+    ) -> Result<(), Error> {
+        // Get caller's address (require_auth for the caller)
+        let caller = env.current_contract_address();
+        caller.require_auth();
+
+        // Get verification request
+        let mut request = storage::get_verification_request(&env, &verification_id)
+            .ok_or(Error::VerificationNotFound)?;
+
+        // Check if caller is authorized oracle
+        let oracle_config = storage::get_oracle_config(&env)
+            .ok_or(Error::OracleNotAuthorized)?;
+        
+        if !oracle_config.oracle_addresses.contains(&caller) {
+            return Err(Error::OracleNotAuthorized);
+        }
+
+        // Check if verification is still pending
+        if request.status != types::VerificationStatus::Pending {
+            return Err(Error::InvalidVerificationStatus);
+        }
+
+        // Update verification request
+        request.status = if verified {
+            types::VerificationStatus::Verified
+        } else {
+            types::VerificationStatus::Rejected
+        };
+        request.verified_by = Some(caller);
+        request.verified_at = Some(env.ledger().timestamp());
+
+        if !verified {
+            request.rejection_reason = Some(String::from_str(&env, "Evidence insufficient"));
+        }
+
+        // Store updated request
+        storage::set_verification_request(&env, &verification_id, &request);
+
+        // Emit verification completed event
+        events::emit_verification_completed(&env, &verification_id, verified, &caller);
+
+        Ok(())
+    }
+
+    /// Get verification status for a split
+    ///
+    /// This function returns the current verification status of a split.
+    pub fn get_verification_status(
+        env: Env,
+        split_id: String,
+    ) -> types::VerificationStatus {
+        // Get all verification requests for this split
+        let verification_ids = storage::get_split_verifications(&env, &split_id);
+
+        // Find the most recent verification
+        let mut latest_status = types::VerificationStatus::Pending;
+        let mut latest_timestamp = 0u64;
+
+        for verification_id in verification_ids.iter() {
+            if let Some(request) = storage::get_verification_request(&env, verification_id) {
+                match request.status {
+                    types::VerificationStatus::Verified => {
+                        if request.verified_at.unwrap_or(0) > latest_timestamp {
+                            latest_timestamp = request.verified_at.unwrap();
+                            latest_status = types::VerificationStatus::Verified;
+                        }
+                    },
+                    types::VerificationStatus::Rejected => {
+                        if request.verified_at.unwrap_or(0) > latest_timestamp {
+                            latest_timestamp = request.verified_at.unwrap();
+                            latest_status = types::VerificationStatus::Rejected;
+                        }
+                    },
+                    _ => {}
+                }
             }
         }
 
-        Err(Error::ParticipantNotFound)
+        latest_status
     }
+}
