@@ -87,6 +87,50 @@ pub struct Split {
 
 /// Contract errors
 #[contracterror]
+/// Rewards status for user rewards
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum RewardsStatus {
+    Active = 0,
+    Claimed = 1,
+    Suspended = 2,
+}
+
+/// User rewards data structure
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct UserRewards {
+    pub user: Address,
+    pub total_splits_created: u64,
+    pub total_splits_participated: u64,
+    pub total_amount_transacted: i128,
+    pub rewards_earned: i128,
+    pub rewards_claimed: i128,
+    pub last_activity: u64,
+    pub status: RewardsStatus,
+}
+
+/// User activity tracking for rewards calculation
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct UserActivity {
+    pub user: Address,
+    pub activity_type: ActivityType,
+    pub split_id: u64,
+    pub amount: i128,
+    pub timestamp: u64,
+}
+
+/// Types of activities that earn rewards
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum ActivityType {
+    SplitCreated = 0,
+    SplitParticipated = 1,
+    DepositMade = 2,
+    SplitCompleted = 3,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum Error {
@@ -104,6 +148,9 @@ pub enum Error {
     InsufficientPremium = 12,
     InsuranceExpired = 13,
     ParticipantNotFound = 14,
+    UserNotFound = 15,
+    InsufficientRewards = 16,
+    RewardsAlreadyClaimed = 17,
 }
 
 /// Configuration for the contract

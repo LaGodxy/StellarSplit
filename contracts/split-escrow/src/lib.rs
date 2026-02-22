@@ -330,27 +330,162 @@ impl SplitEscrowContract {
         storage::get_split_to_insurance(&env, &split_id.to_string())
     }
 
-    /// Get a participant's status in a split
+    /// Track user split usage for rewards calculation
     ///
-    /// Required for DRIP escrow queries.
-    pub fn get_participant_status(
+    /// This function records user activities that contribute to rewards.
+    pub fn track_split_usage(
         env: Env,
-        split_id: u64,
-        participant: Address,
-    ) -> Result<Participant, Error> {
-        if !storage::has_split(&env, split_id) {
-            return Err(Error::SplitNotFound);
-        }
+        user: Address,
+    ) -> Result<(), Error> {
+        // Get caller's address (require_auth for the caller)
+        let caller = env.current_contract_address();
+        caller.require_auth();
 
-        let split = storage::get_split(&env, split_id);
-
-        for i in 0..split.participants.len() {
-            let p = split.participants.get(i).unwrap();
-            if p.address == participant {
-                return Ok(p);
+        // Get or create user rewards data
+        let mut rewards = if let Some(existing_rewards) = storage::get_user_rewards(&env, &user) {
+            existing_rewards
+        } else {
+            types::UserRewards {
+                user: user.clone(),
+                total_splits_created: 0,
+                total_splits_participated: 0,
+                total_amount_transacted: 0,
+                rewards_earned: 0,
+                rewards_claimed: 0,
+                last_activity: env.ledger().timestamp(),
+                status: types::RewardsStatus::Active,
             }
+        };
+
+        // Create activity record
+        let activity_id = storage::get_next_activity_id(&env);
+        let activity = types::UserActivity {
+            user: user.clone(),
+            activity_type: types::ActivityType::SplitParticipated,
+            split_id: 0, // This would be set based on context
+            amount: 0, // This would be set based on context
+            timestamp: env.ledger().timestamp(),
+        };
+
+        // Store activity
+        storage::set_user_activity(&env, &user, activity_id, &activity);
+
+        // Update rewards data
+        rewards.total_splits_participated += 1;
+        rewards.last_activity = env.ledger().timestamp();
+        
+        // Store updated rewards
+        storage::set_user_rewards(&env, &user, &rewards);
+
+        // Emit activity tracked event
+        events::emit_activity_tracked(&env, &user, "split_participated", 0, 0);
+
+        Ok(())
+    }
+
+    /// Calculate rewards for a user
+    ///
+    /// This function calculates the total rewards earned by a user based on their activity.
+    pub fn calculate_rewards(
+        env: Env,
+        user: Address,
+    ) -> i128 {
+        // Get user rewards data
+        let rewards = storage::get_user_rewards(&env, &user)
+            .unwrap_or(types::UserRewards {
+                user: user.clone(),
+                total_splits_created: 0,
+                total_splits_participated: 0,
+                total_amount_transacted: 0,
+                rewards_earned: 0,
+                rewards_claimed: 0,
+                last_activity: env.ledger().timestamp(),
+                status: types::RewardsStatus::Active,
+            });
+
+        // Calculate rewards based on activity
+        // Base rewards: 10 tokens per split created
+        let creation_rewards = rewards.total_splits_created as i128 * 10;
+        
+        // Participation rewards: 5 tokens per split participated
+        let participation_rewards = rewards.total_splits_participated as i128 * 5;
+        
+        // Volume rewards: 0.1% of total amount transacted
+        let volume_rewards = rewards.total_amount_transacted / 1000;
+        
+        // Total rewards
+        let total_rewards = creation_rewards + participation_rewards + volume_rewards;
+        
+        // Update rewards earned
+        let mut updated_rewards = rewards;
+        updated_rewards.rewards_earned = total_rewards;
+        storage::set_user_rewards(&env, &user, &updated_rewards);
+
+        // Calculate available rewards (earned - claimed)
+        let available_rewards = total_rewards - rewards.rewards_claimed;
+
+        // Emit rewards calculated event
+        events::emit_rewards_calculated(&env, &user, total_rewards, available_rewards);
+
+        total_rewards
+    }
+
+    /// Claim rewards for a user
+    ///
+    /// This function allows users to claim their earned rewards.
+    pub fn claim_rewards(
+        env: Env,
+        user: Address,
+    ) -> Result<i128, Error> {
+        // Get caller's address (require_auth for the caller)
+        let caller = env.current_contract_address();
+        caller.require_auth();
+
+        // Ensure caller is claiming their own rewards
+        if caller != user {
+            return Err(Error::UserNotFound);
         }
 
-        Err(Error::ParticipantNotFound)
+        // Get user rewards data
+        let mut rewards = storage::get_user_rewards(&env, &user)
+            .ok_or(Error::UserNotFound)?;
+
+        // Check if user is eligible for rewards
+        if rewards.status != types::RewardsStatus::Active {
+            return Err(Error::RewardsAlreadyClaimed);
+        }
+
+        // Calculate available rewards
+        let available_rewards = rewards.rewards_earned - rewards.rewards_claimed;
+        
+        if available_rewards <= 0 {
+            return Err(Error::InsufficientRewards);
+        }
+
+        // Update claimed rewards
+        rewards.rewards_claimed += available_rewards;
+        rewards.last_activity = env.ledger().timestamp();
+        
+        // Store updated rewards
+        storage::set_user_rewards(&env, &user, &rewards);
+
+        // Note: In a real implementation, you would transfer tokens here
+        // For now, we'll just emit the event
+
+        // Emit rewards claimed event
+        events::emit_rewards_claimed(&env, &user, available_rewards);
+
+        Ok(available_rewards)
+    }
+
+    /// Get user rewards information
+    ///
+    /// This function returns the current rewards status for a user.
+    pub fn get_user_rewards_info(
+        env: Env,
+        user: Address,
+    ) -> Result<types::UserRewards, Error> {
+        storage::get_user_rewards(&env, &user)
+            .ok_or(Error::UserNotFound)
     }
 }

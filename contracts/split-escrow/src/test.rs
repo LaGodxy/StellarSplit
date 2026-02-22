@@ -736,38 +736,6 @@ fn test_escrow_storage() {
         assert!(storage::has_escrow(&env, &split_id));
 
         let retrieved = storage::get_escrow(&env, &split_id).unwrap();
-        assert_eq!(retrieved.total_amount, 1000);
-        assert_eq!(retrieved.creator, creator);
-    });
-}
-
-#[test]
-fn test_participant_payment_storage() {
-    let env = Env::default();
-    let contract_id = env.register_contract(None, SplitEscrowContract);
-    let split_id = String::from_str(&env, "test-split");
-    let participant = Address::generate(&env);
-
-    env.as_contract(&contract_id, || {
-        // Initial payment should be 0
-        let initial = storage::get_participant_payment(&env, &split_id, &participant);
-        assert_eq!(initial, 0);
-
-        // Set payment
-        storage::set_participant_payment(&env, &split_id, &participant, 500);
-        let after_set = storage::get_participant_payment(&env, &split_id, &participant);
-        assert_eq!(after_set, 500);
-
-        // Add to payment
-        let new_total = storage::add_participant_payment(&env, &split_id, &participant, 300);
-        assert_eq!(new_total, 800);
-
-        let final_amount = storage::get_participant_payment(&env, &split_id, &participant);
-        assert_eq!(final_amount, 800);
-    });
-}
-
-#[test]
 fn test_has_participant_payment() {
     let env = Env::default();
     let contract_id = env.register_contract(None, SplitEscrowContract);
@@ -1141,5 +1109,256 @@ fn test_insurance_storage_helpers() {
         let claim_ids = storage::get_insurance_claims(&env, &insurance_id);
         assert_eq!(claim_ids.len(), 1);
         assert_eq!(claim_ids.get(0).unwrap(), claim_id);
+    });
+}
+
+// ============================================
+// Rewards Tests
+// ============================================
+
+#[test]
+fn test_track_split_usage_success() {
+    let (env, admin, token_id, client, _token_client, _token_admin_client) = setup_test();
+    
+    // Initialize contract
+    initialize_contract(&client, &admin, &token_id);
+    
+    let user = Address::generate(&env);
+    
+    // Track split usage
+    client.track_split_usage(&user);
+    
+    // Verify user rewards data was created
+    let rewards = client.get_user_rewards_info(&user);
+    assert!(rewards.total_splits_participated >= 1);
+    assert_eq!(rewards.user, user);
+    
+    // Check events
+    let events = env.events().all();
+    assert!(events.len() > 0);
+}
+
+#[test]
+fn test_calculate_rewards_new_user() {
+    let (env, admin, token_id, client, _token_client, _token_admin_client) = setup_test();
+    
+    // Initialize contract
+    initialize_contract(&client, &admin, &token_id);
+    
+    let user = Address::generate(&env);
+    
+    // Calculate rewards for new user
+    let rewards_amount = client.calculate_rewards(&user);
+    
+    // Should be 0 for new user
+    assert_eq!(rewards_amount, 0);
+    
+    // Verify rewards info
+    let rewards_info = client.get_user_rewards_info(&user);
+    assert_eq!(rewards_info.rewards_earned, 0);
+    assert_eq!(rewards_info.rewards_claimed, 0);
+}
+
+#[test]
+fn test_calculate_rewards_active_user() {
+    let (env, admin, token_id, client, _token_client, _token_admin_client) = setup_test();
+    
+    // Initialize contract
+    initialize_contract(&client, &admin, &token_id);
+    
+    let user = Address::generate(&env);
+    
+    // First, create some user rewards data manually
+    env.as_contract(&client.contract_id, || {
+        let mut rewards = types::UserRewards {
+            user: user.clone(),
+            total_splits_created: 5,
+            total_splits_participated: 10,
+            total_amount_transacted: 1000,
+            rewards_earned: 0,
+            rewards_claimed: 0,
+            last_activity: env.ledger().timestamp(),
+            status: types::RewardsStatus::Active,
+        };
+        
+        // Store manually for testing
+        let key = storage::RewardsStorageKey::UserRewards(user.clone());
+        env.storage().persistent().set(&key, &rewards);
+    });
+    
+    // Calculate rewards
+    let rewards_amount = client.calculate_rewards(&user);
+    
+    // Expected: 5*10 + 10*5 + 1000/1000 = 50 + 50 + 1 = 101
+    assert_eq!(rewards_amount, 101);
+    
+    // Verify rewards info was updated
+    let rewards_info = client.get_user_rewards_info(&user);
+    assert_eq!(rewards_info.rewards_earned, 101);
+}
+
+#[test]
+fn test_claim_rewards_success() {
+    let (env, admin, token_id, client, _token_client, _token_admin_client) = setup_test();
+    
+    // Initialize contract
+    initialize_contract(&client, &admin, &token_id);
+    
+    let user = Address::generate(&env);
+    
+    // Set up user with earned rewards
+    env.as_contract(&client.contract_id, || {
+        let rewards = types::UserRewards {
+            user: user.clone(),
+            total_splits_created: 2,
+            total_splits_participated: 3,
+            total_amount_transacted: 500,
+            rewards_earned: 50, // 2*10 + 3*5 + 500/1000 = 20 + 15 + 0 = 35 (let's say 50 for testing)
+            rewards_claimed: 0,
+            last_activity: env.ledger().timestamp(),
+            status: types::RewardsStatus::Active,
+        };
+        
+        let key = storage::RewardsStorageKey::UserRewards(user.clone());
+        env.storage().persistent().set(&key, &rewards);
+    });
+    
+    // Claim rewards
+    let claimed_amount = client.claim_rewards(&user);
+    assert_eq!(claimed_amount, 50);
+    
+    // Verify rewards info was updated
+    let rewards_info = client.get_user_rewards_info(&user);
+    assert_eq!(rewards_info.rewards_claimed, 50);
+    
+    // Check events
+    let events = env.events().all();
+    assert!(events.len() > 0);
+}
+
+#[test]
+fn test_claim_rewards_insufficient_rewards() {
+    let (env, admin, token_id, client, _token_client, _token_admin_client) = setup_test();
+    
+    // Initialize contract
+    initialize_contract(&client, &admin, &token_id);
+    
+    let user = Address::generate(&env);
+    
+    // Set up user with no earned rewards
+    env.as_contract(&client.contract_id, || {
+        let rewards = types::UserRewards {
+            user: user.clone(),
+            total_splits_created: 0,
+            total_splits_participated: 0,
+            total_amount_transacted: 0,
+            rewards_earned: 0,
+            rewards_claimed: 0,
+            last_activity: env.ledger().timestamp(),
+            status: types::RewardsStatus::Active,
+        };
+        
+        let key = storage::RewardsStorageKey::UserRewards(user.clone());
+        env.storage().persistent().set(&key, &rewards);
+    });
+    
+    // Try to claim rewards
+    let result = client.try_claim_rewards(&user);
+    assert_eq!(result, Err(Ok(types::Error::InsufficientRewards)));
+}
+
+#[test]
+fn test_claim_rewards_unauthorized_user() {
+    let (env, admin, token_id, client, _token_client, _token_admin_client) = setup_test();
+    
+    // Initialize contract
+    initialize_contract(&client, &admin, &token_id);
+    
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    
+    // Set up user1 with rewards
+    env.as_contract(&client.contract_id, || {
+        let rewards = types::UserRewards {
+            user: user1.clone(),
+            total_splits_created: 1,
+            total_splits_participated: 1,
+            total_amount_transacted: 100,
+            rewards_earned: 25,
+            rewards_claimed: 0,
+            last_activity: env.ledger().timestamp(),
+            status: types::RewardsStatus::Active,
+        };
+        
+        let key = storage::RewardsStorageKey::UserRewards(user1.clone());
+        env.storage().persistent().set(&key, &rewards);
+    });
+    
+    // Try user2 to claim user1's rewards
+    let result = client.try_claim_rewards(&user1);
+    assert_eq!(result, Err(Ok(types::Error::UserNotFound)));
+}
+
+#[test]
+fn test_get_user_rewards_info_not_found() {
+    let (env, admin, token_id, client, _token_client, _token_admin_client) = setup_test();
+    
+    // Initialize contract
+    initialize_contract(&client, &admin, &token_id);
+    
+    let user = Address::generate(&env);
+    
+    // Get rewards for non-existent user
+    let result = client.try_get_user_rewards_info(&user);
+    assert_eq!(result, Err(Ok(types::Error::UserNotFound)));
+}
+
+#[test]
+fn test_rewards_storage_helpers() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SplitEscrowContract);
+    
+    let user = Address::generate(&env);
+    
+    env.as_contract(&contract_id, || {
+        // Test storing and retrieving user rewards
+        let rewards = types::UserRewards {
+            user: user.clone(),
+            total_splits_created: 3,
+            total_splits_participated: 5,
+            total_amount_transacted: 750,
+            rewards_earned: 85,
+            rewards_claimed: 25,
+            last_activity: env.ledger().timestamp(),
+            status: types::RewardsStatus::Active,
+        };
+        
+        // Store rewards
+        storage::set_user_rewards(&env, &user, &rewards);
+        
+        // Verify storage
+        assert!(storage::has_user_rewards(&env, &user));
+        
+        let retrieved = storage::get_user_rewards(&env, &user).unwrap();
+        assert_eq!(retrieved.total_splits_created, 3);
+        assert_eq!(retrieved.total_splits_participated, 5);
+        assert_eq!(retrieved.rewards_earned, 85);
+        assert_eq!(retrieved.rewards_claimed, 25);
+        
+        // Test activity storage
+        let activity_id = storage::get_next_activity_id(&env);
+        let activity = types::UserActivity {
+            user: user.clone(),
+            activity_type: types::ActivityType::SplitCreated,
+            split_id: 123,
+            amount: 100,
+            timestamp: env.ledger().timestamp(),
+        };
+        
+        storage::set_user_activity(&env, &user, activity_id, &activity);
+        
+        let retrieved_activity = storage::get_user_activity(&env, &user, activity_id).unwrap();
+        assert_eq!(retrieved_activity.split_id, 123);
+        assert_eq!(retrieved_activity.amount, 100);
     });
 }

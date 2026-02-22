@@ -156,6 +156,51 @@ pub fn emit_payout_made(
     );
 }
 
+/// Emit when user activity is tracked for rewards
+///
+/// This event is emitted whenever a user performs an action
+/// that contributes to their rewards calculation.
+pub fn emit_activity_tracked(env: &Env, user: &Address, activity_type: &str, split_id: u64, amount: i128) {
+    env.events()
+        .publish(
+            (symbol_short!("activity_tracked"),),
+            (user.clone(), activity_type, split_id, amount)
+        );
+}
+
+/// Emit when rewards are calculated for a user
+///
+/// This event shows the total rewards earned by a user.
+pub fn emit_rewards_calculated(env: &Env, user: &Address, total_rewards: i128, available_rewards: i128) {
+    env.events()
+        .publish(
+            (symbol_short!("rewards_calculated"),),
+            (user.clone(), total_rewards, available_rewards)
+        );
+}
+
+/// Emit when rewards are claimed by a user
+///
+/// This event is emitted when a user successfully claims their rewards.
+pub fn emit_rewards_claimed(env: &Env, user: &Address, amount_claimed: i128) {
+    env.events()
+        .publish(
+            (symbol_short!("rewards_claimed"),),
+            (user.clone(), amount_claimed)
+        );
+}
+
+/// Emit when user rewards status changes
+///
+/// This event tracks changes in user rewards eligibility.
+pub fn emit_rewards_status_changed(env: &Env, user: &Address, old_status: &str, new_status: &str) {
+    env.events()
+        .publish(
+            (symbol_short!("rewards_status_changed"),),
+            (user.clone(), old_status, new_status)
+        );
+}
+
 #[contractevent]
 pub fn escrow_created(split_id: String, creator: Address, total_amount: i128);
 

@@ -476,8 +476,66 @@ pub fn add_insurance_claim(env: &Env, insurance_id: &String, claim_id: &String) 
         .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_PERSISTENT);
 }
 
-/// Get all claims for an insurance policy
-pub fn get_insurance_claims(env: &Env, insurance_id: &String) -> Vec<String> {
-    let key = StorageKey::InsuranceClaims(insurance_id.clone());
-    env.storage().persistent().get(&key).unwrap_or(Vec::new(env))
+/// Storage keys for rewards system
+#[derive(Clone)]
+#[contracttype]
+pub enum RewardsStorageKey {
+    UserRewards(Address),
+    UserActivity(Address, u64),
+    ActivityCounter,
+}
+
+/// Get user rewards data
+pub fn get_user_rewards(env: &Env, user: &Address) -> Option<UserRewards> {
+    let key = RewardsStorageKey::UserRewards(user.clone());
+    env.storage().persistent().get(&key)
+}
+
+/// Set user rewards data
+pub fn set_user_rewards(env: &Env, user: &Address, rewards: &UserRewards) {
+    let key = RewardsStorageKey::UserRewards(user.clone());
+    env.storage().persistent().set(&key, rewards);
+}
+
+/// Check if user has rewards data
+pub fn has_user_rewards(env: &Env, user: &Address) -> bool {
+    let key = RewardsStorageKey::UserRewards(user.clone());
+    env.storage().persistent().has(&key)
+}
+
+/// Get user activity
+pub fn get_user_activity(env: &Env, user: &Address, activity_id: u64) -> Option<UserActivity> {
+    let key = RewardsStorageKey::UserActivity(user.clone(), activity_id);
+    env.storage().persistent().get(&key)
+}
+
+/// Set user activity
+pub fn set_user_activity(env: &Env, user: &Address, activity_id: u64, activity: &UserActivity) {
+    let key = RewardsStorageKey::UserActivity(user.clone(), activity_id);
+    env.storage().persistent().set(&key, activity);
+}
+
+/// Get next activity ID
+pub fn get_next_activity_id(env: &Env) -> u64 {
+    let key = RewardsStorageKey::ActivityCounter;
+    let id = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(id + 1));
+    id
+}
+
+/// Get all activities for a user (limited to recent ones for efficiency)
+pub fn get_user_activities(env: &Env, user: &Address, limit: u32) -> Vec<UserActivity> {
+    let mut activities = Vec::new(env);
+    let counter = get_next_activity_id(env);
+    
+    // Get recent activities (up to limit)
+    let start = if counter > limit as u64 { counter - limit as u64 } else { 0 };
+    
+    for i in start..counter {
+        if let Some(activity) = get_user_activity(env, user, i) {
+            activities.push_back(activity);
+        }
+    }
+    
+    activities
 }
